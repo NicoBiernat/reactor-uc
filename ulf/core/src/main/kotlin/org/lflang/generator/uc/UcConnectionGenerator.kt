@@ -378,9 +378,6 @@ class UcConnectionGenerator(
     allGroupedConnections.forEachIndexed { idx, el -> uids[el] = idx }
   }
 
-  fun getNumOutputs(federate: UcFederate) =
-      federatedConnectionBundles.sumOf { it.numOutputs(federate) }
-
   fun getNumFederatedConnectionBundles() = federatedConnectionBundles.size
 
   /**
