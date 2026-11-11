@@ -20,8 +20,8 @@ static SystemEventHandler handler_b;
 static void assert_heap_invariant(EventQueue* q, UNITY_LINE_TYPE line) {
   for (size_t i = 1; i < q->size; i++) {
     size_t parent = (i - 1) / 2;
-    tag_t parent_tag = get_tag(&q->array[parent]);
-    tag_t child_tag = get_tag(&q->array[i]);
+    tag_t parent_tag = get_tag(EventQueue_event_at(q, parent));
+    tag_t child_tag = get_tag(EventQueue_event_at(q, i));
     if (lf_tag_compare(parent_tag, child_tag) <= 0) {
       continue;
     }
@@ -44,7 +44,7 @@ static void assert_pops_in_order(EventQueue* q, const instant_t* expected, size_
   for (size_t i = 0; i < n; i++) {
     snprintf(msg, sizeof(msg), "pop #%zu", i);
     UNITY_TEST_ASSERT_EQUAL_INT(LF_OK, q->pop(q, &out.event.super), line, msg);
-    UNITY_TEST_ASSERT_EQUAL_INT64(expected[i], get_tag(&out).time, line, msg);
+    UNITY_TEST_ASSERT_EQUAL_INT64(expected[i], get_tag(&out.event.super).time, line, msg);
   }
   UNITY_TEST_ASSERT(q->empty(q), line, "queue is not empty after popping every expected event");
 }
@@ -228,15 +228,15 @@ void test_find_equal_same_tag(void) {
 
   // Search for an event at tag (100,0) with trigger_a (e1)
   Event search1 = EVENT_INIT(((tag_t){.time = 100, .microstep = 0}), &trigger_a, NULL);
-  ArbitraryEvent* found = q.find_equal_same_tag(&q, &search1.super);
+  AbstractEvent* found = q.find_equal_same_tag(&q, &search1.super);
   TEST_ASSERT_NOT_NULL(found);
-  TEST_ASSERT_EQUAL_PTR(&trigger_a, found->event.trigger);
+  TEST_ASSERT_EQUAL_PTR(&trigger_a, ((Event*)found)->trigger);
 
   // Search for an event at tag (100,0) with trigger_b (e3)
   Event search2 = EVENT_INIT(((tag_t){.time = 100, .microstep = 0}), &trigger_b, NULL);
   found = q.find_equal_same_tag(&q, &search2.super);
   TEST_ASSERT_NOT_NULL(found);
-  TEST_ASSERT_EQUAL_PTR(&trigger_b, found->event.trigger);
+  TEST_ASSERT_EQUAL_PTR(&trigger_b, ((Event*)found)->trigger);
 
   // A matching trigger at a different microstep is not a match.
   Event search3 = EVENT_INIT(((tag_t){.time = 100, .microstep = 1}), &trigger_a, NULL);
@@ -328,7 +328,7 @@ void test_remove_requires_sift_up(void) {
 
   // Guard: the sift-up path is only exercised if insert() produced exactly the layout above.
   for (size_t i = 0; i < ARRAY_SIZE(layout); i++) {
-    TEST_ASSERT_EQUAL_INT64(layout[i], get_tag(&q.array[i]).time);
+    TEST_ASSERT_EQUAL_INT64(layout[i], get_tag(EventQueue_event_at(&q, i)).time);
   }
   ASSERT_HEAP_INVARIANT(&q);
 
@@ -359,7 +359,7 @@ void test_remove_requires_sift_down(void) {
 
   // Guard: the sift-down path is only exercised if insert() produced exactly the layout above.
   for (size_t i = 0; i < ARRAY_SIZE(layout); i++) {
-    TEST_ASSERT_EQUAL_INT64(layout[i], get_tag(&q.array[i]).time);
+    TEST_ASSERT_EQUAL_INT64(layout[i], get_tag(EventQueue_event_at(&q, i)).time);
   }
 
   TEST_ASSERT_EQUAL(LF_OK, remove_at_time(&q, 2));
@@ -384,7 +384,7 @@ void test_remove_last_element(void) {
   insert_at_time(&q, 20);
   insert_at_time(&q, 30);
   // Guard: 30 must really be the last slot for this test to cover that branch.
-  TEST_ASSERT_EQUAL_INT64(30, get_tag(&q.array[q.size - 1]).time);
+  TEST_ASSERT_EQUAL_INT64(30, get_tag(EventQueue_event_at(&q, q.size - 1)).time);
 
   TEST_ASSERT_EQUAL(LF_OK, remove_at_time(&q, 30));
   TEST_ASSERT_EQUAL(2, q.size);
@@ -453,9 +453,9 @@ void test_system_event_find_and_remove(void) {
   TEST_ASSERT_NULL(q.find_equal_same_tag(&q, &search_event.super));
 
   SystemEvent search_s1 = SYSTEM_EVENT_INIT(((tag_t){.time = 100}), &handler_a, NULL);
-  ArbitraryEvent* found = q.find_equal_same_tag(&q, &search_s1.super);
+  AbstractEvent* found = q.find_equal_same_tag(&q, &search_s1.super);
   TEST_ASSERT_NOT_NULL(found);
-  TEST_ASSERT_EQUAL_PTR(&handler_a, found->system_event.handler);
+  TEST_ASSERT_EQUAL_PTR(&handler_a, ((SystemEvent*)found)->handler);
 
   // Removing s1 leaves s2 and the regular event untouched.
   TEST_ASSERT_EQUAL(LF_OK, q.remove(&q, &search_s1.super));
@@ -466,12 +466,67 @@ void test_system_event_find_and_remove(void) {
   SystemEvent search_s2 = SYSTEM_EVENT_INIT(((tag_t){.time = 100}), &handler_b, NULL);
   found = q.find_equal_same_tag(&q, &search_s2.super);
   TEST_ASSERT_NOT_NULL(found);
-  TEST_ASSERT_EQUAL_PTR(&handler_b, found->system_event.handler);
+  TEST_ASSERT_EQUAL_PTR(&handler_b, ((SystemEvent*)found)->handler);
   TEST_ASSERT_TRUE(contains_time(&q, 100));
 
   // s2 and e1 share a tag, so their relative pop order is unspecified: only check the tag.
   const instant_t expect[] = {100, 100};
   ASSERT_POPS_IN_ORDER(&q, expect);
+}
+
+static void insert_system_event_at_time(EventQueue* q, instant_t t, SystemEventHandler* handler, void* payload) {
+  SystemEvent e = SYSTEM_EVENT_INIT(((tag_t){.time = t}), handler, payload);
+  TEST_ASSERT_EQUAL(LF_OK, q->insert(q, &e.super));
+}
+
+void test_system_event_queue(void) {
+  // A SystemEventQueue stores SystemEvents in smaller elements, but behaves like a general EventQueue.
+  EventQueue q;
+  SystemEvent array[QUEUE_SIZE];
+  SystemEventQueue_ctor(&q, array, QUEUE_SIZE);
+  TEST_ASSERT_EQUAL(sizeof(SystemEvent), q.element_size);
+  TEST_ASSERT_TRUE(sizeof(SystemEvent) < sizeof(ArbitraryEvent));
+
+  int payload_a = 1;
+  const instant_t times[] = {50, 10, 40, 20, 30, 60};
+  for (size_t i = 0; i < ARRAY_SIZE(times); i++) {
+    insert_system_event_at_time(&q, times[i], (i % 2) ? &handler_a : &handler_b, &payload_a);
+  }
+  ASSERT_HEAP_INVARIANT(&q);
+  TEST_ASSERT_EQUAL_INT64(10, q.next_tag(&q).time);
+
+  // Events are matched on tag and handler, and the payload is handed back on removal.
+  SystemEvent key = SYSTEM_EVENT_INIT(((tag_t){.time = 20}), &handler_a, NULL);
+  void* payload = NULL;
+  TEST_ASSERT_EQUAL(LF_OK, q.remove_matching(&q, &key.super, &payload));
+  TEST_ASSERT_EQUAL_PTR(&payload_a, payload);
+  ASSERT_HEAP_INVARIANT(&q);
+
+  // Shifting the tags keeps the order and the handlers.
+  q.shift_all_tags(&q, 5);
+  ASSERT_HEAP_INVARIANT(&q);
+
+  SystemEvent out;
+  const instant_t expect[] = {15, 35, 45, 55, 65};
+  for (size_t i = 0; i < ARRAY_SIZE(expect); i++) {
+    TEST_ASSERT_EQUAL(LF_OK, q.pop(&q, &out.super));
+    TEST_ASSERT_EQUAL(SYSTEM_EVENT, out.super.type);
+    TEST_ASSERT_EQUAL_INT64(expect[i], out.super.tag.time);
+    TEST_ASSERT_TRUE(out.handler == &handler_a || out.handler == &handler_b);
+    TEST_ASSERT_EQUAL_PTR(&payload_a, out.super.payload);
+  }
+  TEST_ASSERT_TRUE(q.empty(&q));
+}
+
+void test_system_event_queue_rejects_events(void) {
+  // A reactor Event does not fit into the elements of a SystemEventQueue.
+  EventQueue q;
+  SystemEvent array[QUEUE_SIZE];
+  SystemEventQueue_ctor(&q, array, QUEUE_SIZE);
+
+  Event e = EVENT_INIT(((tag_t){.time = 10}), &trigger_a, NULL);
+  TEST_ASSERT_EQUAL(LF_INVALID_VALUE, q.insert(&q, &e.super));
+  TEST_ASSERT_TRUE(q.empty(&q));
 }
 
 Environment* _lf_environment = NULL;
@@ -494,5 +549,7 @@ int main(void) {
   RUN_TEST(test_remove_sole_element);
   RUN_TEST(test_remove_root);
   RUN_TEST(test_system_event_find_and_remove);
+  RUN_TEST(test_system_event_queue);
+  RUN_TEST(test_system_event_queue_rejects_events);
   return UNITY_END();
 }
