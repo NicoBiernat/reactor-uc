@@ -62,7 +62,7 @@ abstract class UcMainGenerator(
         """
       |// Define queues used by scheduler
       |LF_DEFINE_EVENT_QUEUE(${eventQueueName}, ${numEvents})
-      |LF_DEFINE_EVENT_QUEUE(${systemEventQueueName}, ${getNumSystemEvents()})
+      |LF_DEFINE_SYSTEM_EVENT_QUEUE(${systemEventQueueName}, ${getNumSystemEvents()})
       |LF_DEFINE_REACTION_QUEUE(${reactionQueueName}, ${numReactions})
     """
             .trimMargin()
@@ -73,7 +73,7 @@ abstract class UcMainGenerator(
         """
       |// Define queues used by scheduler
       |LF_INITIALIZE_EVENT_QUEUE(${eventQueueName}, ${numEvents})
-      |LF_INITIALIZE_EVENT_QUEUE(${systemEventQueueName}, ${getNumSystemEvents()})
+      |LF_INITIALIZE_SYSTEM_EVENT_QUEUE(${systemEventQueueName}, ${getNumSystemEvents()})
       |LF_INITIALIZE_REACTION_QUEUE(${reactionQueueName}, ${numReactions})
     """
             .trimMargin()
