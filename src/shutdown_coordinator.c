@@ -70,7 +70,7 @@ static void ShutdownCoordinator_handle_time_proposal(ShutdownCoordinator* self, 
   bool announcement_time_equal = lf_tag_compare(announcement_tag, self->announcement_of_shutdown) == 0;
 
   if (current_step > self->longest_path || !((announcement_time_equal && shutdown_larger) || announcement_time_less)) {
-    LF_WARN(FED, "Shutdown message received but dropped! Current Step: %i", current_step);
+    LF_WARN(FED, "Shutdown message received but dropped! Current Step: %zu", current_step);
     return;
   }
 
