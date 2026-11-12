@@ -9,7 +9,7 @@ void Timer_prepare(Trigger* _self, Event* event) {
   Scheduler* sched = _self->parent->env->scheduler;
   _self->is_present = true;
   sched->register_for_cleanup(sched, _self);
-  LF_DEBUG(TRIG, "Triggering %d reactions", self->effects.size);
+  LF_DEBUG(TRIG, "Triggering %zu reactions", self->effects.size);
   for (size_t i = 0; i < self->effects.size; i++) {
     validaten(sched->add_to_reaction_queue(sched, self->effects.reactions[i]));
   }
@@ -21,8 +21,8 @@ void Timer_cleanup(Trigger* _self) {
   Scheduler* sched = env->scheduler;
   _self->is_present = false;
 
-  // Schedule next event unless it is a single-shot timer.
-  if (self->period > NEVER) {
+  // Schedule next event unless it is a single-shot timer. A period of 0 (or NEVER) means single-shot.
+  if (self->period > 0) {
     tag_t next_tag = lf_delay_tag(sched->current_tag(sched), self->period);
     Event event = EVENT_INIT(next_tag, _self, NULL);
     sched->schedule_at(sched, &event);

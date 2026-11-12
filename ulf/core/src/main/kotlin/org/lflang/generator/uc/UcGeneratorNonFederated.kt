@@ -38,6 +38,9 @@ class UcGeneratorNonFederated(context: LFGeneratorContext, scopeProvider: LFGlob
     // Generate header and source files for the main reactor.
     generateReactorFiles(variants.top, srcGenPath)
 
+    // The reactor generators report errors, e.g. on connections, which must stop the build.
+    if (errorsOccurred()) return GeneratorResult.Status.FAILED
+
     // Generate preambles for all reactors.
     for (r in getAllImportedResources(resource)) {
       val generator = UcPreambleGenerator(r, fileConfig, scopeProvider)

@@ -254,9 +254,9 @@ static void ClockSynchronization_handle_delay_request(ClockSynchronization* self
   ((FederatedEnvironment*)self->env)->send_msg_buf.which_message = FederateMessage_clock_sync_msg_tag;
   ((FederatedEnvironment*)self->env)->send_msg_buf.message.clock_sync_msg.which_message =
       ClockSyncMessage_delay_response_tag;
-  ((FederatedEnvironment*)self->env)->send_msg_buf.message.clock_sync_msg.message.sync_response.time =
+  ((FederatedEnvironment*)self->env)->send_msg_buf.message.clock_sync_msg.message.delay_response.time =
       event->super.tag.time;
-  ((FederatedEnvironment*)self->env)->send_msg_buf.message.clock_sync_msg.message.sync_response.sequence_number =
+  ((FederatedEnvironment*)self->env)->send_msg_buf.message.clock_sync_msg.message.delay_response.sequence_number =
       payload->msg.message.delay_request.sequence_number;
   ret = chan->send_blocking(chan, &((FederatedEnvironment*)self->env)->send_msg_buf);
   if (ret != LF_OK) {

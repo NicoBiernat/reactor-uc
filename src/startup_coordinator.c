@@ -67,12 +67,20 @@ void StartupCoordinator_schedule_timers_joining(StartupCoordinator* self, Reacto
     Trigger* trigger = reactor->triggers[i];
     if (trigger->type == TRIG_TIMER) {
       Timer* timer = (Timer*)trigger;
-      const interval_t duration = join_time - federation_start_time - timer->offset;
-      const interval_t individual_join_time = ((duration / timer->period) + 1) * timer->period + federation_start_time;
-      tag_t tag = {.time = individual_join_time + timer->offset, .microstep = 0};
+      // The first tag of the timer in the federation, and the first of its tags at or after our join time.
+      const instant_t first_time = federation_start_time + timer->offset;
+      instant_t next_time = first_time;
+      if (join_time > first_time) {
+        if (timer->period <= 0) {
+          continue; // A single-shot timer that already fired in the federation before we joined.
+        }
+        const interval_t periods = (join_time - first_time + timer->period - 1) / timer->period;
+        next_time = first_time + periods * timer->period;
+      }
+      tag_t tag = {.time = next_time, .microstep = 0};
       Event event = EVENT_INIT(tag, &timer->super, NULL);
       ret = self->env->scheduler->schedule_at(self->env->scheduler, &event);
-      validate(ret == LF_OK);
+      validate(ret == LF_OK || ret == LF_AFTER_STOP_TAG);
     }
   }
   for (size_t i = 0; i < reactor->children_size; i++) {
@@ -264,7 +272,7 @@ static void StartupCoordinator_handle_startup_handshake_response(StartupCoordina
       bool during_startup = true;
       bool all_running = true;
       for (size_t i = 0; i < self->num_neighbours; i++) {
-        LF_DEBUG(FED, "State of neighbor %i : %i", i, self->neighbor_state[i].initial_state_of_neighbor);
+        LF_DEBUG(FED, "State of neighbor %zu : %i", i, self->neighbor_state[i].initial_state_of_neighbor);
 
         if (self->neighbor_state[i].initial_state_of_neighbor != StartupCoordinationState_RUNNING) {
           all_running = false;
@@ -365,7 +373,7 @@ static void StartupCoordinator_handle_start_time_proposal(StartupCoordinator* se
     // Received an external start time proposal.
     instant_t proposed_time = payload->msg.message.start_time_proposal.time;
     size_t step = payload->msg.message.start_time_proposal.step;
-    LF_DEBUG(FED, "Received start time proposal " PRINTF_TIME " step %d from federate %d", proposed_time, step,
+    LF_DEBUG(FED, "Received start time proposal " PRINTF_TIME " step %zu from federate %d", proposed_time, step,
              payload->neighbor_index);
     switch (self->state) {
     case StartupCoordinationState_UNINITIALIZED:
@@ -381,7 +389,7 @@ static void StartupCoordinator_handle_start_time_proposal(StartupCoordinator* se
       // Update the number of proposals received from this neighbor.
       // Note: Messages may be processed out of order due to scheduler timing, so we track the
       // maximum step received rather than strictly incrementing.
-      LF_DEBUG(FED, "Neighbor: %d Neighbor State: %d Step: %d", payload->neighbor_index,
+      LF_DEBUG(FED, "Neighbor: %d Neighbor State: %zu Step: %zu", payload->neighbor_index,
                self->neighbor_state[payload->neighbor_index].start_time_proposals_received, step);
 
       if (step > self->neighbor_state[payload->neighbor_index].start_time_proposals_received) {
@@ -449,10 +457,6 @@ static void StartupCoordinator_handle_start_time_request(StartupCoordinator* sel
     // enough regardless of neighbour count; scheduling one per neighbour would
     // exhaust the reserved payload pool (NUM_RESERVED_EVENTS=3 slots) with
     // ≥2 neighbours because the handshake-retry event is still pending.
-    StartupCoordinator_schedule_system_self_event(self, self->env->get_physical_time(self->env) + TRANSIENT_WAIT_TIME,
-                                                  StartupCoordination_start_time_response_tag);
-
-    // ONE timeout for the whole round.
     StartupCoordinator_schedule_system_self_event(self, self->env->get_physical_time(self->env) + TRANSIENT_WAIT_TIME,
                                                   StartupCoordination_start_time_response_tag);
   } else {
@@ -533,10 +537,15 @@ static void StartupCoordinator_handle_start_time_response(StartupCoordinator* se
   // federated input pool overflows. Step the physical clock up to the federation time
   // and inform the scheduler (what clock-sync does for a large initial offset).
   // The sync servo then fine-tunes the residual.
+  // Without clock sync, the PhysicalClock ignores its offset (get_time() returns the hardware time), so setting the
+  // time would not move the physical clock, and shifting the system events by the step would only delay all of them
+  // by the whole step.
   FederatedEnvironment* env_fed = (FederatedEnvironment*)self->env;
-  interval_t clock_step = joining_time - env_fed->clock.get_time(&env_fed->clock);
-  env_fed->clock.set_time(&env_fed->clock, joining_time);
-  self->env->scheduler->step_clock(self->env->scheduler, clock_step);
+  if (env_fed->do_clock_sync) {
+    interval_t clock_step = joining_time - env_fed->clock.get_time(&env_fed->clock);
+    env_fed->clock.set_time(&env_fed->clock, joining_time);
+    self->env->scheduler->step_clock(self->env->scheduler, clock_step);
+  }
 
   tag_t start_tag = {.time = joining_time, .microstep = 0};
   if (self->joining_policy == JOIN_IMMEDIATELY) {
@@ -570,7 +579,11 @@ static void StartupCoordinator_handle_join_time_announcement(const StartupCoordi
         const FederatedConnectionBundle* bundle = env->net_bundles[i];
         for (size_t j = 0; j < bundle->inputs_size; j++) {
           tag_t joining_time = {.time = payload->msg.message.joining_time_announcement.joining_time, .microstep = 0};
-          bundle->inputs[j]->last_known_tag = joining_time;
+          // last_known_tag is also written by the network channel thread (handle_tagged_msg).
+          FederatedInputConnection* input = bundle->inputs[j];
+          MUTEX_LOCK(input->mutex);
+          input->last_known_tag = joining_time;
+          MUTEX_UNLOCK(input->mutex);
         }
       }
     }

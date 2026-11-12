@@ -9,7 +9,7 @@
 
 void Environment_schedule_startups(const Environment* self, const tag_t start_tag) {
   if (self->startup) {
-    LF_DEBUG(ENV, "Scheduling Startup Reactions at" PRINTF_TAG, start_tag);
+    LF_DEBUG(ENV, "Scheduling Startup Reactions at " PRINTF_TAG, PRINTF_TAG_ARGS(start_tag));
     Event event = EVENT_INIT(start_tag, &self->startup->super, NULL);
     LF_DEBUG(ENV, "Self: %p Scheduler: %p", self, self->scheduler);
     lf_ret_t ret = self->scheduler->schedule_at(self->scheduler, &event);
@@ -26,7 +26,8 @@ void Environment_schedule_timers(Environment* self, const Reactor* reactor, cons
       tag_t tag = {.time = start_tag.time + timer->offset, .microstep = start_tag.microstep};
       Event event = EVENT_INIT(tag, trigger, NULL);
       ret = self->scheduler->schedule_at(self->scheduler, &event);
-      validate(ret == LF_OK);
+      // If the stop tag is already known (federated programs), a timer whose first tag is after it never fires.
+      validate(ret == LF_OK || ret == LF_AFTER_STOP_TAG);
     }
   }
   for (size_t i = 0; i < reactor->children_size; i++) {

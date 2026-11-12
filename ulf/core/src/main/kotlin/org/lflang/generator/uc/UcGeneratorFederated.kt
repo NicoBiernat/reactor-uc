@@ -56,6 +56,10 @@ class UcGeneratorFederated(context: LFGeneratorContext, scopeProvider: LFGlobalS
 
     generateFederateFiles(federate, srcGenPath)
 
+    // The reactor and federate generators report errors, e.g. on connections, which must stop the
+    // build.
+    if (errorsOccurred()) return GeneratorResult.Status.FAILED
+
     // Collect the info on the generated sources
     ucSources.addAll(nonFederatedGenerator.ucSources)
     codeMaps.putAll(nonFederatedGenerator.codeMaps)
@@ -118,8 +122,12 @@ class UcGeneratorFederated(context: LFGeneratorContext, scopeProvider: LFGlobalS
   }
 
   override fun doGenerate(resource: Resource, context: LFGeneratorContext) {
-    // Do not reuse the connections cached for a previously generated program.
+    // Do not reuse the connections cached for a previously generated program. The IP addresses and
+    // UART devices are kept in global objects too, and lfc can generate several programs in one
+    // JVM.
     UcConnectionGenerator.resetFederationCache()
+    IpAddressManager.reset()
+    UARTDeviceManager.reset()
     // When --gen-fed-templates is used, the base class returns early without
     // populating reactors. We need to initialize manually for that case.
     if (context.args.generateFedTemplates) {

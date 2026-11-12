@@ -93,11 +93,12 @@ class UcConnectionGenerator(
         lhsPortIndex += 1
       }
 
-      // If we are out of lhs variables, but not rhs, then there should be an iterated connection.
-      // We handle it by resetting the lhsChannels variable and index and continuing until
-      // we have been through all rhs channels.
+      // If we are out of lhs variables, but not rhs: an iterated connection `(a.out)+ -> ...`
+      // starts again at the first lhs channel until we have been through all rhs channels. A
+      // connection that is not iterated ends here and leaves the remaining rhs channels
+      // unconnected.
       if (lhsPortIndex >= lhsPorts.size && rhsPortIndex < rhsPorts.size) {
-        assert(conn.isIterated)
+        if (!conn.isIterated) break
         lhsPorts = conn.leftPorts.map { getChannelQueue(it, federates) }
         lhsPortIndex = 0
       }
@@ -240,6 +241,7 @@ class UcConnectionGenerator(
       val allFederates: List<UcFederate>,
       val groupedConnections: List<UcGroupedConnection>,
       val bundles: List<UcFederatedConnectionBundle>,
+      val channelsConnectedTwice: List<Pair<Connection, String>>,
   ) {
     private val bundlesByFederate =
         HashMap<Pair<Instantiation, Int>, MutableList<UcFederatedConnectionBundle>>()
@@ -310,24 +312,11 @@ class UcConnectionGenerator(
       return distance
     }
 
-    // Finds the longest path through the federation. Performs two breadth-first searches looking
-    // for the longest path. See: https://www.geeksforgeeks.org/longest-path-undirected-tree/
+    // Finds the longest shortest path (the diameter) of the federation graph, i.e. the number of
+    // hops a message needs to reach every federate from every other federate. Performs a
+    // breadth-first-search from every federate. Two searches are only exact if the graph is a tree.
     val longestFederatePath: Int by lazy {
-      // Return the furthest node and its distance from u
-      fun furthest(u: Int): Pair<Int, Int> {
-        val distance = distancesFrom(u)
-        var maxDist = -1
-        var nodeIdx = -1
-        for (i in distance.indices) {
-          if (distance[i] > maxDist) {
-            maxDist = distance[i]
-            nodeIdx = i
-          }
-        }
-        return Pair(nodeIdx, maxDist)
-      }
-      val firstEndPoint = furthest(0)
-      furthest(firstEndPoint.first).second
+      allFederates.indices.maxOfOrNull { u -> distancesFrom(u).max() } ?: 0
     }
 
     val fullyConnected: Boolean by lazy { distancesFrom(0).all { it >= 0 } }
@@ -349,9 +338,45 @@ class UcConnectionGenerator(
     val grouped = groupConnections(channels)
     val result =
         FederationConnections(
-            reactor, allFederates, grouped, createFederatedConnectionBundles(grouped))
+            reactor,
+            allFederates,
+            grouped,
+            createFederatedConnectionBundles(grouped),
+            findChannelsConnectedTwice(channels))
     federation = result
     return result
+  }
+
+  /**
+   * Destination channels that more than one connection writes to, as the connection that writes the
+   * channel again and the name of the channel. A port channel can only have one upstream.
+   */
+  val channelsConnectedTwice: List<Pair<Connection, String>>
+
+  private fun findChannelsConnectedTwice(
+      channels: List<UcConnectionChannel>
+  ): List<Pair<Connection, String>> {
+    data class ChannelKey(
+        val container: String?,
+        val port: String,
+        val bankIdx: Int,
+        val portIdx: Int
+    )
+    val seen = mutableSetOf<ChannelKey>()
+    val res = mutableListOf<Pair<Connection, String>>()
+    for (channel in channels) {
+      val dest = channel.dest
+      val container = dest.varRef.container?.name
+      val key = ChannelKey(container, dest.varRef.name, dest.bankIdx, dest.portIdx)
+      if (!seen.add(key)) {
+        val bank = if (dest.varRef.container?.isBank == true) "[${dest.bankIdx}]" else ""
+        val name =
+            if (container != null) "${container}${bank}.${dest.varRef.name}[${dest.portIdx}]"
+            else "${dest.varRef.name}[${dest.portIdx}]"
+        res.add(Pair(channel.conn, name))
+      }
+    }
+    return res
   }
 
   init {
@@ -361,12 +386,14 @@ class UcConnectionGenerator(
       val federation = federationConnections()
       federatedConnectionBundles = federation.bundlesOf(currentFederate!!)
       nonFederatedConnections = federation.nonFederatedConnectionsOf(currentFederate)
+      channelsConnectedTwice = federation.channelsConnectedTwice
     } else {
       // In the non-federated case, all grouped connections are handled together.
       val channels = mutableListOf<UcConnectionChannel>()
       reactor.allConnections.forEach { channels.addAll(parseConnectionChannels(it, allFederates)) }
       federatedConnectionBundles = emptyList()
       nonFederatedConnections = groupConnections(channels)
+      channelsConnectedTwice = findChannelsConnectedTwice(channels)
     }
 
     // Assign a unique ID to each connection to avoid possible naming conflicts in the generated
@@ -584,14 +611,19 @@ class UcConnectionGenerator(
     """
           .trimMargin()
 
+  // Connects one source channel to `size` consecutive channels of a destination port, starting
+  // at the channel `dest`. A C loop indexes the typed port array, so the stride is correct.
   private fun generateGroupedConnectChannel(
       groupedConn: UcGroupedConnection,
       src: UcChannel,
       dest: UcChannel,
       size: Int,
   ) =
-      """|lf_grouped_connect((Connection *) &self->${groupedConn.uniqueName()}${groupedConn.connectionIndex(src)}, (Port *) ${src.generateChannelPointer()}, (Port *) ${dest.generateChannelPort()}, ${size});
-    """
+      """
+            |for (int i = 0; i < ${size}; i++) {
+            |  lf_connect((Connection *) &self->${groupedConn.uniqueName()}${groupedConn.connectionIndex(src)}, (Port *) ${src.generateChannelPointer()}, (Port *) ${dest.generateChannelPointer("i")});
+            |}
+        """
           .trimMargin()
 
   private fun generateInterleavedConnectChannel(
@@ -610,19 +642,26 @@ class UcConnectionGenerator(
         """
           .trimMargin()
 
-  // checks if the given list of Integers is continuously increasing.
-  fun isContinuous(array: List<Int>): Boolean {
-    return array.size != array[array.size - 1] + 1
-  }
+  // checks if the given list of Integers is increasing in steps of one, e.g. [4, 5, 6, 7].
+  fun isContinuous(array: List<Int>): Boolean = array.zipWithNext().all { (a, b) -> b == a + 1 }
 
   private fun generateOutboundConnection(
       conn: UcGroupedConnection,
       outgoingConns: List<UcConnectionChannel>
   ): String {
-    val groupedDownstreams = HashMap<Pair<VarRef, Int>, MutableList<UcConnectionChannel>>()
+    // Only channels that start at the same source channel and end at the same destination port
+    // can be connected in one loop, since every iteration uses the same connection object.
+    data class GroupKey(val dest: VarRef, val destBank: Int, val srcPort: Int, val srcBank: Int)
+    val groupedDownstreams = LinkedHashMap<GroupKey, MutableList<UcConnectionChannel>>()
     outgoingConns.forEach { channel ->
       groupedDownstreams
-          .getOrPut(Pair(channel.dest.varRef, channel.dest.bankIdx), { mutableListOf() })
+          .getOrPut(
+              GroupKey(
+                  channel.dest.varRef,
+                  channel.dest.bankIdx,
+                  channel.src.getCodePortIdx(),
+                  channel.src.getCodeBankIdx()),
+              { mutableListOf() })
           .add(channel)
     }
 
@@ -829,7 +868,14 @@ class UcConnectionGenerator(
     var res = BASE_NUMBER_OF_EVENTS
     for (conn in nonFederatedConnections) {
       if (!conn.isLogical) {
-        res += conn.maxNumPendingEvents
+        // Every source channel has its own delayed/physical connection object, and each of
+        // them can have maxNumPendingEvents events in the queue at the same time.
+        val numConnectionObjects =
+            conn.channels
+                .map { Pair(it.src.getCodeBankIdx(), it.src.getCodePortIdx()) }
+                .distinct()
+                .size
+        res += conn.maxNumPendingEvents * numConnectionObjects
       }
     }
     for (bundle in federatedConnectionBundles) {

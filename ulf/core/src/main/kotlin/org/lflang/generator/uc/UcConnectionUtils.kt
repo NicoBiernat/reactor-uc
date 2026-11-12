@@ -167,7 +167,9 @@ class UcChannel(val varRef: VarRef, val portIdx: Int, val bankIdx: Int, val fede
 
   fun generateChannelPointer() = "&self->${reactorInstance}${portInstance}"
 
-  fun generateChannelPort() = "&self->${reactorInstance}${varRef.name}"
+  /** Pointer to the channel `offset` (a C expression) positions after this channel. */
+  fun generateChannelPointer(offset: String) =
+      "&self->${reactorInstance}${varRef.name}[${getCodePortIdx()} + ${offset}]"
 }
 
 /**
@@ -211,7 +213,7 @@ class UcChannelQueue(varRef: VarRef, federates: List<UcFederate>, variant: UcRea
   // Get a number of channels from this port. This has sideeffects and will remove these
   // channels from the port.
   fun takeChannels(numChannels: Int): List<UcChannel> {
-    assert(numChannels >= channels.size)
+    assert(numChannels <= channels.size)
     val res = mutableListOf<UcChannel>()
     for (i in 1..numChannels) {
       res.add(channels.removeFirst())
