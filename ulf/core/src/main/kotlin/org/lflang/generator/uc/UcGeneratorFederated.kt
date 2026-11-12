@@ -10,7 +10,6 @@ import org.lflang.generator.CodeMap
 import org.lflang.generator.GeneratorResult
 import org.lflang.generator.GeneratorUtils.canGenerate
 import org.lflang.generator.LFGeneratorContext
-import org.lflang.generator.uc.UcInstanceGenerator.Companion.width
 import org.lflang.lf.LfFactory
 import org.lflang.lf.Reactor
 import org.lflang.reactor
@@ -32,9 +31,9 @@ class UcGeneratorFederated(context: LFGeneratorContext, scopeProvider: LFGlobalS
   // Compute the total number of events and reactions within a federate. This reuses the
   // computation for the non-federated case, but federated connections are also considered.
   fun totalNumEventsAndReactionsFederated(federate: UcFederate): Pair<Int, Int> {
-    val eventsFromFederatedConnections = maxNumPendingEvents[mainDef.reactor]!!
+    val eventsFromFederatedConnections = maxNumPendingEvents[variants.top]!!
     val eventsAndReactionsInFederate =
-        nonFederatedGenerator.totalNumEventsAndReactions(federate.inst.reactor)
+        nonFederatedGenerator.totalNumEventsAndReactions(variants.top.child(federate.inst))
     return Pair(
         eventsFromFederatedConnections + eventsAndReactionsInFederate.first,
         eventsAndReactionsInFederate.second,
@@ -50,8 +49,8 @@ class UcGeneratorFederated(context: LFGeneratorContext, scopeProvider: LFGlobalS
     if (!canGenerate(errorsOccurred(), federate.inst, messageReporter, context))
         return GeneratorResult.Status.FAILED
 
-    // generate header and source files for all reactors
-    getAllInstantiatedReactors(federate.inst.reactor).map {
+    // generate header and source files for all reactor variants within the federate
+    variants.instantiatedBelow(variants.top.child(federate.inst)).map {
       nonFederatedGenerator.generateReactorFiles(it, srcGenPath)
     }
 
@@ -132,8 +131,15 @@ class UcGeneratorFederated(context: LFGeneratorContext, scopeProvider: LFGlobalS
       super.doGenerate(resource, context)
     }
     createMainDef()
+    // Find all variants of reactors (with concrete widths and types) in the program. The
+    // parameters of the top-level reactor are forwarded to the federates at compile time.
+    if (!analyzeVariants(mainDef.reactor.toDefinition())) {
+      context.finish(GeneratorResult.Status.FAILED, codeMaps)
+      return
+    }
+    nonFederatedGenerator.variants = variants
     for (inst in getAllFederates()) {
-      for (bankIdx in 0..<inst.width) {
+      for (bankIdx in 0..<variants.top.width(inst)) {
         federates.add(UcFederate(inst, bankIdx))
       }
     }
@@ -191,14 +197,15 @@ class UcGeneratorFederated(context: LFGeneratorContext, scopeProvider: LFGlobalS
 
   private fun generateFederateFiles(federate: UcFederate, srcGenPath: Path) {
     // First thing is that we need to also generate the top-level federate reactor files
-    nonFederatedGenerator.generateReactorFiles(federate.inst.reactor, srcGenPath)
+    nonFederatedGenerator.generateReactorFiles(variants.top.child(federate.inst), srcGenPath)
 
     // Then we generate a reactor which wraps around the top-level reactor in the federate.
-    val generator = UcFederateGenerator(federate, federates, fileConfig, messageReporter)
+    val generator =
+        UcFederateGenerator(variants.top, federate, federates, fileConfig, messageReporter)
     val top = federate.inst.eContainer() as Reactor
 
     // Record the number of events and reactions in this reactor
-    maxNumPendingEvents[top] = generator.getMaxNumPendingEvents()
+    maxNumPendingEvents[variants.top] = generator.getMaxNumPendingEvents()
 
     val headerFile = Paths.get("lf_federate.h")
     val sourceFile = Paths.get("lf_federate.c")
