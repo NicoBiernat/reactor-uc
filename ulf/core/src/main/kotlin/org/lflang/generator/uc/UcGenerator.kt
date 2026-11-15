@@ -43,6 +43,7 @@ abstract class UcGenerator(
   // Contains the maximum number of pending events required by each reactor variant.
   // Is updated as reactors are analyzed and code-generated.
   val maxNumPendingEvents = mutableMapOf<UcReactorVariant, Int>()
+  val numberOfOutputConnections = mutableMapOf<UcReactorVariant, Int>()
 
   /**
    * The reactor variants (instantiations of reactors with concrete const-generic parameters and

@@ -32,11 +32,13 @@ class UcGeneratorFederated(context: LFGeneratorContext, scopeProvider: LFGlobalS
   // computation for the non-federated case, but federated connections are also considered.
   fun totalNumEventsAndReactionsFederated(federate: UcFederate): Pair<Int, Int> {
     val eventsFromFederatedConnections = maxNumPendingEvents[variants.top]!!
+    // Every federated output connection has a flush reaction, which is not part of any reactor.
+    val numberOfFlushReactions = numberOfOutputConnections[variants.top]!!
     val eventsAndReactionsInFederate =
         nonFederatedGenerator.totalNumEventsAndReactions(variants.top.child(federate.inst))
     return Pair(
         eventsFromFederatedConnections + eventsAndReactionsInFederate.first,
-        eventsAndReactionsInFederate.second,
+        numberOfFlushReactions + eventsAndReactionsInFederate.second,
     )
   }
 
@@ -85,6 +87,7 @@ class UcGeneratorFederated(context: LFGeneratorContext, scopeProvider: LFGlobalS
     codeMaps.clear()
     ucSources.clear()
     maxNumPendingEvents.clear()
+    numberOfOutputConnections.clear()
     nonFederatedGenerator.maxNumPendingEvents.clear()
     nonFederatedGenerator.codeMaps.clear()
     nonFederatedGenerator.ucSources.clear()
@@ -214,6 +217,7 @@ class UcGeneratorFederated(context: LFGeneratorContext, scopeProvider: LFGlobalS
 
     // Record the number of events and reactions in this reactor
     maxNumPendingEvents[variants.top] = generator.getMaxNumPendingEvents()
+    numberOfOutputConnections[variants.top] = generator.getNumberOfOutputConnections()
 
     val headerFile = Paths.get("lf_federate.h")
     val sourceFile = Paths.get("lf_federate.c")
