@@ -54,7 +54,10 @@ open class UcGroupedConnection(
   val srcPort = src.variable as Port
 
   /** The type of the source port, with type parameters and array lengths resolved. */
-  val srcType = srcPort.type?.let { if (srcInst != null) variant.child(srcInst).resolveType(it) else variant.resolveType(it) }
+  val srcType =
+      srcPort.type?.let {
+        if (srcInst != null) variant.child(srcInst).resolveType(it) else variant.resolveType(it)
+      }
 
   val isVoid
     get(): Boolean = srcType == null || srcType.id == "void"
