@@ -82,7 +82,7 @@ struct EventQueue {
    * use `remove_matching` or `replace_payload`, which do the lookup and the action under
    * a single acquisition of the mutex.
    */
-  AbstractEvent* (*find_equal_same_tag)(EventQueue* self, AbstractEvent* event);
+  ArbitraryEvent* (*find_equal_same_tag)(EventQueue* self, AbstractEvent* event);
   /** @brief Remove the event equal to @p event from the queue. Returns
    * LF_EVENT_NOT_FOUND if no such event exists, LF_OK otherwise.
    */
@@ -109,35 +109,19 @@ struct EventQueue {
    */
   lf_ret_t (*replace_payload)(EventQueue* self, AbstractEvent* key, const void* new_value, size_t payload_size);
 
-  size_t size;         /**< @brief Current number of events in the queue. */
-  size_t capacity;     /**< @brief Maximum number of events the queue can hold. */
-  size_t element_size; /**< @brief Size of one element of the backing array, i.e. the largest event it holds. */
-  char* array;         /**< @brief Backing array of the event queue, `capacity` elements of `element_size`. */
-  MUTEX_T mutex;       /**< @brief Mutex protecting concurrent access. */
+  size_t size;           /**< @brief Current number of events in the queue. */
+  size_t capacity;       /**< @brief Maximum number of events the queue can hold. */
+  ArbitraryEvent* array; /**< @brief Backing array of the event queue. */
+  MUTEX_T mutex;         /**< @brief Mutex protecting concurrent access. */
 };
 
-/** @brief Return the event at index @p idx of the backing array (in heap order, not sorted). */
-static inline AbstractEvent* EventQueue_event_at(EventQueue* self, size_t idx) {
-  return (AbstractEvent*)(self->array + (idx * self->element_size));
-}
-
 /**
- * @brief Initialize an EventQueue that can hold any kind of event (Events and SystemEvents).
+ * @brief Initialize an EventQueue.
  * @param self     The EventQueue to initialize.
  * @param array    Backing array of at least @p capacity ArbitraryEvent elements.
  * @param capacity Maximum number of events the queue can hold.
  */
 void EventQueue_ctor(EventQueue* self, ArbitraryEvent* array, size_t capacity);
-
-/**
- * @brief Initialize an EventQueue that only holds SystemEvents. Its elements are smaller than the
- * elements of a general EventQueue (`sizeof(SystemEvent)` instead of `sizeof(ArbitraryEvent)`).
- * Inserting a (reactor) Event into it fails with LF_INVALID_VALUE.
- * @param self     The EventQueue to initialize.
- * @param array    Backing array of at least @p capacity SystemEvent elements.
- * @param capacity Maximum number of events the queue can hold.
- */
-void SystemEventQueue_ctor(EventQueue* self, SystemEvent* array, size_t capacity);
 
 struct ReactionQueue {
   lf_ret_t (*insert)(ReactionQueue* self, Reaction* reaction);

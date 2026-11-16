@@ -730,16 +730,6 @@ typedef struct FederatedInputConnection FederatedInputConnection;
 
 #define LF_INITIALIZE_EVENT_QUEUE(Name, NumEvents) EventQueue_ctor(&Name.super, Name.events, NumEvents);
 
-// A queue that only holds SystemEvents, with smaller elements than a general event queue.
-#define LF_DEFINE_SYSTEM_EVENT_QUEUE(Name, NumEvents)                                                                  \
-  typedef struct {                                                                                                     \
-    EventQueue super;                                                                                                  \
-    SystemEvent events[(NumEvents)];                                                                                   \
-  } Name##_t;                                                                                                          \
-  static Name##_t Name;
-
-#define LF_INITIALIZE_SYSTEM_EVENT_QUEUE(Name, NumEvents) SystemEventQueue_ctor(&Name.super, Name.events, NumEvents);
-
 #define LF_INITIALIZE_REACTION_QUEUE(Name, NumReactions)                                                               \
   ReactionQueue_ctor(&Name.super, Name.level_tail, Name.level_occupied, NumReactions);
 
@@ -776,7 +766,7 @@ typedef struct FederatedInputConnection FederatedInputConnection;
   static DynamicScheduler scheduler;                                                                                   \
   static ArbitraryEvent events[(NumEvents)];                                                                           \
   static EventQueue event_queue;                                                                                       \
-  static SystemEvent system_events[(NumSystemEvents)];                                                                 \
+  static ArbitraryEvent system_events[(NumSystemEvents)];                                                              \
   static EventQueue system_event_queue;                                                                                \
   static Reaction* level_tail[(NumReactions)];                                                                         \
   static lf_level_word_t level_occupied[LF_LEVEL_WORDS(NumReactions)];                                                 \
@@ -784,7 +774,7 @@ typedef struct FederatedInputConnection FederatedInputConnection;
   void lf_exit(void) { FederatedEnvironment_free(&env); }                                                              \
   void lf_start() {                                                                                                    \
     EventQueue_ctor(&event_queue, events, (NumEvents));                                                                \
-    SystemEventQueue_ctor(&system_event_queue, system_events, (NumSystemEvents));                                      \
+    EventQueue_ctor(&system_event_queue, system_events, (NumSystemEvents));                                            \
     ReactionQueue_ctor(&reaction_queue, level_tail, level_occupied, (NumReactions));                                   \
     DynamicScheduler_ctor(&scheduler, _lf_environment, &event_queue, &system_event_queue, &reaction_queue, (Timeout),  \
                           (KeepAlive));                                                                                \

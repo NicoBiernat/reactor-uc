@@ -7,14 +7,8 @@ class UcShutdownCoordinatorGenerator(
 
   companion object {
     // The number of system events allocated for each neighbor. Used to schedule received messages
-    // as system events. A neighbor sends a shutdown announcement only when it accepts a new
-    // (better) shutdown proposal, and it only forwards announcements that the receiver can still
-    // accept (step <= longest path, see ShutdownCoordinator_perform_shutdown). Thus, a federate
-    // receives at most one announcement per accepted proposal and neighbor. With a single
-    // initiator, or with several initiators in a fully connected federation (where announcements
-    // are not forwarded), this is at most one pending announcement per neighbor. The pool is shared
-    // by all neighbors.
-    val numSystemEventsPerBundle = 1
+    // as system events. The worst-case number of events is 1 per Networkchannel.
+    val numSystemEventsPerBundle = 3
 
     // The number of additional system events allocated: one is reserved for the federate's own
     // shutdown request (NUM_RESERVED_EVENTS in shutdown_coordinator.c), one is spare. The pool

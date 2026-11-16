@@ -24,37 +24,17 @@ static inline size_t rchild_idx(size_t parent_idx) { return lchild_idx(parent_id
  */
 static inline size_t parent_idx(size_t child_idx) { return (child_idx - 1) / 2; }
 
-/** @brief Return the event at index @p idx of the backing array. */
-static inline AbstractEvent* event_at(EventQueue* self, size_t idx) { return EventQueue_event_at(self, idx); }
-
-/** @brief Return the tag of the event at index @p idx. */
-static inline tag_t tag_at(EventQueue* self, size_t idx) { return get_tag(event_at(self, idx)); }
-
-/** @brief Swap the events at the indices @p idx1 and @p idx2. */
-static void swap(EventQueue* self, size_t idx1, size_t idx2) {
-  ArbitraryEvent temp; // large enough for every element size
-  memcpy(&temp, event_at(self, idx2), self->element_size);
-  memcpy(event_at(self, idx2), event_at(self, idx1), self->element_size);
-  memcpy(event_at(self, idx1), &temp, self->element_size);
-}
-
-/** @brief Return the size of the event type of @p event, or 0 if the type is unknown. */
-static size_t event_size_of(const AbstractEvent* event) {
-  switch (event->type) {
-  case EVENT:
-    return sizeof(Event);
-  case SYSTEM_EVENT:
-    return sizeof(SystemEvent);
-  default:
-    return 0;
-  }
+static void swap(ArbitraryEvent* ev1, ArbitraryEvent* ev2) {
+  ArbitraryEvent temp = *ev2;
+  *ev2 = *ev1;
+  *ev1 = temp;
 }
 
 static tag_t EventQueue_next_tag(EventQueue* self) {
   MUTEX_LOCK(self->mutex);
   tag_t ret = FOREVER_TAG;
   if (self->size > 0) {
-    ret = tag_at(self, 0);
+    ret = get_tag(&self->array[0]);
   }
   MUTEX_UNLOCK(self->mutex);
   return ret;
@@ -69,30 +49,32 @@ static lf_ret_t EventQueue_insert(EventQueue* self, AbstractEvent* event) {
     return LF_EVENT_QUEUE_FULL;
   }
 
-  size_t event_size = event_size_of(event);
-  if (event_size == 0) {
+  size_t event_size;
+  switch (event->type) {
+  case EVENT:
+    event_size = sizeof(Event);
+    break;
+  case SYSTEM_EVENT:
+    event_size = sizeof(SystemEvent);
+    break;
+  default:
     LF_ERR(QUEUE, "Unknown event type %d", event->type);
     MUTEX_UNLOCK(self->mutex);
     return LF_ERR;
   }
-  if (event_size > self->element_size) {
-    LF_ERR(QUEUE, "Event of type %d does not fit into the elements of this EventQueue", event->type);
-    MUTEX_UNLOCK(self->mutex);
-    return LF_INVALID_VALUE;
-  }
 
-  memcpy(event_at(self, self->size), event, event_size);
+  memcpy(&self->array[self->size], event, event_size);
 
   size_t idx = self->size++;
-  tag_t event_tag = tag_at(self, idx);
+  tag_t event_tag = get_tag(&self->array[idx]);
 
   // Bubble up the newly added event
   while (idx > 0) {
     size_t p_idx = parent_idx(idx);
-    if (lf_tag_compare(event_tag, tag_at(self, p_idx)) >= 0) {
+    if (lf_tag_compare(event_tag, get_tag(&self->array[p_idx])) >= 0) {
       break;
     }
-    swap(self, idx, p_idx);
+    swap(&self->array[idx], &self->array[p_idx]);
     idx = p_idx;
   };
 
@@ -112,16 +94,16 @@ static void heapify(EventQueue* self, size_t idx) {
     size_t right = rchild_idx(idx);
     size_t smallest = idx;
 
-    if (left < self->size && (lf_tag_compare(tag_at(self, left), tag_at(self, smallest)) < 0)) {
+    if (left < self->size && (lf_tag_compare(get_tag(&self->array[left]), get_tag(&self->array[smallest])) < 0)) {
       smallest = left;
     }
-    if (right < self->size && (lf_tag_compare(tag_at(self, right), tag_at(self, smallest)) < 0)) {
+    if (right < self->size && (lf_tag_compare(get_tag(&self->array[right]), get_tag(&self->array[smallest])) < 0)) {
       smallest = right;
     }
     if (smallest == idx) {
       break;
     }
-    swap(self, idx, smallest);
+    swap(&self->array[idx], &self->array[smallest]);
     idx = smallest;
   }
 }
@@ -153,7 +135,7 @@ static void EventQueue_shift_all_tags(EventQueue* self, interval_t step) {
   MUTEX_LOCK(self->mutex);
 
   for (size_t i = 0; i < self->size; i++) {
-    AbstractEvent* event = event_at(self, i);
+    AbstractEvent* event = &self->array[i].event.super;
     instant_t new_tag = lf_time_add(event->tag.time, step);
     if (new_tag < 0) {
       new_tag = 0;
@@ -166,10 +148,12 @@ static void EventQueue_shift_all_tags(EventQueue* self, interval_t step) {
 }
 
 static int find_matching_event_idx(EventQueue* self, AbstractEvent* event,
-                                   bool (*match_fn)(const AbstractEvent*, const AbstractEvent*)) {
+                                   bool (*match_fn)(ArbitraryEvent*, ArbitraryEvent*)) {
   for (size_t i = 0; i < self->size; i++) {
-    if (match_fn(event_at(self, i), event)) {
-      return (int)i;
+    ArbitraryEvent* current_event = &self->array[i];
+
+    if (match_fn(current_event, (ArbitraryEvent*)event)) {
+      return i;
     }
   }
   return -1;
@@ -184,14 +168,14 @@ static int find_equal_same_tag_idx(EventQueue* self, AbstractEvent* event) {
   return find_matching_event_idx(self, event, events_same_tag_and_handler);
 }
 
-static AbstractEvent* EventQueue_find_equal_same_tag(EventQueue* self, AbstractEvent* event) {
+static ArbitraryEvent* EventQueue_find_equal_same_tag(EventQueue* self, AbstractEvent* event) {
 
   MUTEX_LOCK(self->mutex);
   int event_idx = find_equal_same_tag_idx(self, event);
-  AbstractEvent* found = NULL;
+  ArbitraryEvent* found = NULL;
 
   if (event_idx >= 0) {
-    found = event_at(self, event_idx);
+    found = &self->array[event_idx];
   }
 
   MUTEX_UNLOCK(self->mutex);
@@ -201,10 +185,10 @@ static AbstractEvent* EventQueue_find_equal_same_tag(EventQueue* self, AbstractE
 static void sift_up(EventQueue* self, size_t idx) {
   while (idx > 0) {
     size_t p_idx = parent_idx(idx);
-    if (lf_tag_compare(tag_at(self, idx), tag_at(self, p_idx)) >= 0) {
+    if (lf_tag_compare(get_tag(&self->array[idx]), get_tag(&self->array[p_idx])) >= 0) {
       break;
     }
-    swap(self, idx, p_idx);
+    swap(&self->array[idx], &self->array[p_idx]);
     idx = p_idx;
   }
 }
@@ -219,10 +203,10 @@ static lf_ret_t EventQueue_remove_matching(EventQueue* self, AbstractEvent* key,
   }
 
   if (out_payload != NULL) {
-    *out_payload = event_at(self, event_idx)->payload;
+    *out_payload = self->array[event_idx].event.super.payload;
   }
 
-  swap(self, event_idx, self->size - 1);
+  swap(&self->array[event_idx], &self->array[self->size - 1]);
   self->size--;
 
   // The relocated element may violate the heap in either direction.
@@ -252,7 +236,7 @@ static lf_ret_t EventQueue_replace_payload(EventQueue* self, AbstractEvent* key,
     return LF_EVENT_NOT_FOUND;
   }
 
-  void* payload = event_at(self, event_idx)->payload;
+  void* payload = self->array[event_idx].event.super.payload;
   if (payload == NULL) {
     MUTEX_UNLOCK(self->mutex);
     return LF_INVALID_VALUE;
@@ -272,15 +256,21 @@ static lf_ret_t EventQueue_pop(EventQueue* self, AbstractEvent* event) {
     return LF_EVENT_QUEUE_EMPTY;
   }
 
-  ArbitraryEvent ret; // large enough for every element size
-  memcpy(&ret, event_at(self, 0), self->element_size);
-  swap(self, 0, self->size - 1);
+  ArbitraryEvent ret = self->array[0];
+  swap(&self->array[0], &self->array[self->size - 1]);
   self->size--;
   heapify(self, 0);
 
-  size_t event_size = event_size_of((AbstractEvent*)&ret);
-  if (event_size == 0) {
-    LF_ERR(QUEUE, "Unknown event type %d", ((AbstractEvent*)&ret)->type);
+  size_t event_size;
+  switch (ret.event.super.type) {
+  case EVENT:
+    event_size = sizeof(Event);
+    break;
+  case SYSTEM_EVENT:
+    event_size = sizeof(SystemEvent);
+    break;
+  default:
+    LF_ERR(QUEUE, "Unknown event type %d", ret.event.super.type);
     MUTEX_UNLOCK(self->mutex);
     return LF_ERR;
   }
@@ -297,7 +287,7 @@ static bool EventQueue_empty(EventQueue* self) {
   return ret;
 }
 
-static void EventQueue_ctor_with_element_size(EventQueue* self, void* array, size_t element_size, size_t capacity) {
+void EventQueue_ctor(EventQueue* self, ArbitraryEvent* array, size_t capacity) {
   self->insert = EventQueue_insert;
   self->pop = EventQueue_pop;
   self->empty = EventQueue_empty;
@@ -311,17 +301,8 @@ static void EventQueue_ctor_with_element_size(EventQueue* self, void* array, siz
   self->next_tag = EventQueue_next_tag;
   self->size = 0;
   self->capacity = capacity;
-  self->element_size = element_size;
-  self->array = (char*)array;
+  self->array = array;
   Mutex_ctor(&self->mutex.super);
-}
-
-void EventQueue_ctor(EventQueue* self, ArbitraryEvent* array, size_t capacity) {
-  EventQueue_ctor_with_element_size(self, array, sizeof(ArbitraryEvent), capacity);
-}
-
-void SystemEventQueue_ctor(EventQueue* self, SystemEvent* array, size_t capacity) {
-  EventQueue_ctor_with_element_size(self, array, sizeof(SystemEvent), capacity);
 }
 
 static lf_ret_t ReactionQueue_insert(ReactionQueue* self, Reaction* reaction) {

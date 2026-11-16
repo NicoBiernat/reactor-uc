@@ -20,9 +20,8 @@ typedef enum { EVENT, SYSTEM_EVENT } EventType;
 
 /** Abstract event type which all other events inherit from. All event pointers can be casted to AbstractEvent. */
 typedef struct {
-  // `tag` is the first member: tag_t is 8-byte aligned, so this order avoids padding on 32-bit platforms.
-  tag_t tag;
   EventType type;
+  tag_t tag;
   void* payload;
 } AbstractEvent;
 
@@ -76,65 +75,69 @@ void EventPayloadPool_ctor(EventPayloadPool* self, char* buffer, bool* used, siz
                            size_t reserved);
 
 /**
- * @brief Get the tag of an event.
- * @param event Pointer to the event (an Event or a SystemEvent).
+ * @brief Get the tag of an arbitrary event.
+ * @param arbitrary_event Pointer to the arbitrary event.
  * @return The tag of the event.
  */
-static inline tag_t get_tag(const AbstractEvent* event) { return event->tag; }
+static inline tag_t get_tag(ArbitraryEvent* arbitrary_event) { return arbitrary_event->event.super.tag; }
 
 /**
- * @brief Compare the tags of two events.
- * @param evt1 Pointer to the first event.
- * @param evt2 Pointer to the second event.
+ * @brief Compare the tags of two arbitrary events.
+ * @param evt1 Pointer to the first arbitrary event.
+ * @param evt2 Pointer to the second arbitrary event.
  * @return true if the tags are the same, false otherwise.
  */
-static inline bool events_same_tag(const AbstractEvent* evt1, const AbstractEvent* evt2) {
+static inline bool events_same_tag(ArbitraryEvent* evt1, ArbitraryEvent* evt2) {
   return lf_tag_compare(get_tag(evt1), get_tag(evt2)) == 0;
 }
 
 /**
- * @brief Compare the triggers of two events.
- * @param evt1 Pointer to the first event.
- * @param evt2 Pointer to the second event.
- * @return true if both are (reactor) events with the same trigger, false otherwise.
+ * @brief Compare the triggers of two arbitrary events.
+ * @param evt1 Pointer to the first arbitrary event.
+ * @param evt2 Pointer to the second arbitrary event.
+ * @return true if the triggers of both events are the same, false otherwise.
  */
-static inline bool events_same_trigger(const AbstractEvent* evt1, const AbstractEvent* evt2) {
-  if (evt1->type != EVENT || evt2->type != EVENT) {
+static inline bool events_same_trigger(ArbitraryEvent* evt1, ArbitraryEvent* evt2) {
+  if (evt1->event.super.type != EVENT || evt2->event.super.type != EVENT) {
     return false;
   }
-  return ((const Event*)evt1)->trigger == ((const Event*)evt2)->trigger;
+  Event* event1 = &evt1->event;
+  Event* event2 = &evt2->event;
+  return event1->trigger == event2->trigger;
 }
 
 /**
- * @brief Compare the handlers of two events.
- * @param evt1 Pointer to the first event.
- * @param evt2 Pointer to the second event.
- * @return true if both are system events with the same handler, false otherwise.
+ * @brief Compare the handlers of two arbitrary events.
+ * @param evt1 Pointer to the first arbitrary event.
+ * @param evt2 Pointer to the second arbitrary event.
+ * @return true if the handlers of both events are the same, false otherwise.
  */
-static inline bool events_same_handler(const AbstractEvent* evt1, const AbstractEvent* evt2) {
-  if (evt1->type != SYSTEM_EVENT || evt2->type != SYSTEM_EVENT) {
+static inline bool events_same_handler(ArbitraryEvent* evt1, ArbitraryEvent* evt2) {
+  if (evt1->event.super.type != SYSTEM_EVENT || evt2->event.super.type != SYSTEM_EVENT) {
     return false;
   }
-  return ((const SystemEvent*)evt1)->handler == ((const SystemEvent*)evt2)->handler;
+  SystemEvent* event1 = &evt1->system_event;
+  SystemEvent* event2 = &evt2->system_event;
+  return event1->handler == event2->handler;
 }
 
 /**
- * @brief Compare the tags and triggers of two events.
- * @param evt1 Pointer to the first event.
- * @param evt2 Pointer to the second event.
+ * @brief Compare the tags and triggers of two arbitrary events.
+ * @param evt1 Pointer to the first arbitrary event.
+ * @param evt2 Pointer to the second arbitrary event.
  * @return true if the tags and triggers of both events are the same, false otherwise.
  */
-static inline bool events_same_tag_and_trigger(const AbstractEvent* evt1, const AbstractEvent* evt2) {
+static inline bool events_same_tag_and_trigger(ArbitraryEvent* evt1, ArbitraryEvent* evt2) {
   return (events_same_tag(evt1, evt2) && events_same_trigger(evt1, evt2)) != 0;
 }
 
 /**
- * @brief Compare the tags and handlers of two events.
- * @param evt1 Pointer to the first event.
- * @param evt2 Pointer to the second event.
+ * @brief Compare the tags and handlers of two arbitrary events.
+ * @param evt1 Pointer to the first arbitrary event.
+ * @param evt2 Pointer to the second arbitrary event.
  * @return true if the tags and handlers of both events are the same, false otherwise.
  */
-static inline bool events_same_tag_and_handler(const AbstractEvent* evt1, const AbstractEvent* evt2) {
+static inline bool events_same_tag_and_handler(ArbitraryEvent* evt1, ArbitraryEvent* evt2) {
   return (events_same_tag(evt1, evt2) && events_same_handler(evt1, evt2)) != 0;
 }
 

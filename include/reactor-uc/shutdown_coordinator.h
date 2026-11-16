@@ -11,6 +11,7 @@ typedef struct ShutdownCoordinator ShutdownCoordinator;
 
 /** The payload of a ShutdownCoordinator event. */
 typedef struct {
+  SystemEvent system_event;
   int neighbor_index;
   ShutdownCoordination msg;
 } ShutdownEvent;
