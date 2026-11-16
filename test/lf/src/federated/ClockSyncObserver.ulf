@@ -1,0 +1,56 @@
+// Checks that lf_clock_sync_round_observed is called for every clock-sync round of the slave
+// and reports consistent values. The grandmaster does not run sync rounds.
+reactor Src {
+  output out: int
+  timer t(0, 100ms)
+  reaction(t) -> out {=
+    lf_set(out, 42);
+  =}
+}
+
+reactor Dst {
+  preamble {=
+    static int rounds = 0;
+    static bool consistent = true;
+
+    void lf_clock_sync_round_observed(Environment* env, const ClockSyncRound* round) {
+      (void)env;
+      rounds++;
+      if (round->result == CLOCK_SYNC_ROUND_DISCARDED) {
+        consistent = consistent && round->rtt < 0 && round->offset == 0;
+        return;
+      }
+      const ClockSyncTimestamps* ts = &round->timestamps;
+      interval_t rtt = (ts->t4 - ts->t1) - (ts->t3 - ts->t2);
+      consistent = consistent && round->rtt == rtt && round->rtt >= 0;
+      consistent = consistent && round->offset == rtt / 2 - (ts->t2 - ts->t1);
+      consistent = consistent && round->priority == 1 && round->master_neighbor_index == 0;
+      consistent = consistent && (round->result == CLOCK_SYNC_ROUND_ADJUSTED || round->correction == 0);
+    }
+  =}
+
+  input in: int
+  reaction(in) {=
+    validate(in->value == 42);
+  =}
+
+  reaction(shutdown) {=
+    printf("Observed %d clock-sync rounds\n", rounds);
+    validate(rounds >= 3);
+    validate(consistent);
+  =}
+}
+
+@platform("native")
+@timeout(1s)
+federated reactor {
+  @clock_sync(grandmaster=true)
+  @maxwait(100ms)
+  r1 = new Src()
+
+  @clock_sync(grandmaster=false, period=100000000)
+  @maxwait(100ms)
+  r2 = new Dst()
+
+  r1.out -> r2.in after 10ms
+}

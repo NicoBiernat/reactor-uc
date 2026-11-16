@@ -10,6 +10,29 @@
 #define NEIGHBOR_INDEX_UNKNOWN -2
 #define NUM_RESERVED_EVENTS 2 // There is 1 periodic event, but it is rescheduled before it is freed so we need 2.
 
+__attribute__((weak)) void lf_clock_sync_round_observed(Environment* env, const ClockSyncRound* round) {
+  (void)env;
+  (void)round;
+}
+
+/** Report a finished sync round to lf_clock_sync_round_observed. */
+static void ClockSynchronization_report_round(ClockSynchronization* self, const ClockSyncTimestamps* timestamps,
+                                              ClockSyncRoundResult result, interval_t rtt, interval_t offset,
+                                              interval_t correction) {
+  ClockSyncRound round = {
+      .result = result,
+      .sequence_number = self->sequence_number,
+      .priority = self->my_priority,
+      .master_neighbor_index = self->master_neighbor_index,
+      .timestamps = *timestamps,
+      .rtt = rtt,
+      .offset = offset,
+      .correction = correction,
+      .accumulated_error = self->servo.accumulated_error,
+  };
+  lf_clock_sync_round_observed(self->env, &round);
+}
+
 static void ClockSynchronization_correct_clock(ClockSynchronization* self, ClockSyncTimestamps* timestamps) {
   LF_DEBUG(CLOCK_SYNC, "Correcting clock. T1=" PRINTF_TIME " T2=" PRINTF_TIME " T3=" PRINTF_TIME " T4=" PRINTF_TIME,
            timestamps->t1, timestamps->t2, timestamps->t3, timestamps->t4);
@@ -19,6 +42,7 @@ static void ClockSynchronization_correct_clock(ClockSynchronization* self, Clock
   // the round instead of feeding a bogus sample into the servo.
   if (rtt < 0) {
     LF_WARN(CLOCK_SYNC, "Discarding sync round with negative RTT " PRINTF_TIME, rtt);
+    ClockSynchronization_report_round(self, timestamps, CLOCK_SYNC_ROUND_DISCARDED, rtt, 0, 0);
     return;
   }
   interval_t owd = rtt / 2;
@@ -41,6 +65,7 @@ static void ClockSynchronization_correct_clock(ClockSynchronization* self, Clock
     lf_ret_t step_ret = env_fed->clock.step_time(&env_fed->clock, clock_offset);
     if (step_ret != LF_OK) {
       LF_WARN(CLOCK_SYNC, "Failed to step clock by " PRINTF_TIME ". Retrying on the next sync round", clock_offset);
+      ClockSynchronization_report_round(self, timestamps, CLOCK_SYNC_ROUND_STEP_FAILED, rtt, clock_offset, 0);
       return;
     }
     self->has_initial_sync = true;
@@ -50,6 +75,7 @@ static void ClockSynchronization_correct_clock(ClockSynchronization* self, Clock
     // of pending events.
     self->env->scheduler->step_clock(self->env->scheduler, clock_offset);
     self->env->platform->notify(self->env->platform);
+    ClockSynchronization_report_round(self, timestamps, CLOCK_SYNC_ROUND_STEPPED, rtt, clock_offset, 0);
     return;
   }
   self->has_initial_sync = true;
@@ -82,6 +108,7 @@ static void ClockSynchronization_correct_clock(ClockSynchronization* self, Clock
            correction);
 
   env_fed->clock.adjust_time(&env_fed->clock, correction);
+  ClockSynchronization_report_round(self, timestamps, CLOCK_SYNC_ROUND_ADJUSTED, rtt, clock_offset, correction);
 }
 
 /** Send our current clock priority to all connected neighbors. */
