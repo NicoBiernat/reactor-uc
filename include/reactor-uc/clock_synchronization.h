@@ -42,6 +42,37 @@ typedef struct {
   instant_t t4; // Time when the master received the follow-up message.
 } ClockSyncTimestamps;
 
+/** Outcome of a completed clock-sync round, see ClockSyncRound. */
+typedef enum {
+  CLOCK_SYNC_ROUND_ADJUSTED = 0,    // The offset was fed into the servo, which adjusted the clock frequency.
+  CLOCK_SYNC_ROUND_STEPPED = 1,     // The offset exceeded the step threshold and the clock was stepped by it.
+  CLOCK_SYNC_ROUND_STEP_FAILED = 2, // Stepping the clock failed, the round had no effect.
+  CLOCK_SYNC_ROUND_DISCARDED = 3,   // The round was discarded because of a negative round-trip time.
+} ClockSyncRoundResult;
+
+/** The measurements and the outcome of one clock-sync round with the master neighbor. */
+typedef struct {
+  ClockSyncRoundResult result;
+  int sequence_number;            // Sequence number of the round.
+  int priority;                   // Our clock-sync priority, i.e. the number of hops to the grandmaster.
+  int master_neighbor_index;      // Index of the master neighbor that this round synchronized with.
+  ClockSyncTimestamps timestamps; // The four timestamps of the round.
+  interval_t rtt;                 // Round-trip time without the processing time at the master.
+  interval_t offset;              // Measured offset to the master before this round's correction (0 if discarded).
+  interval_t correction;          // Servo output (frequency adjustment in ppb), 0 unless the result is ADJUSTED.
+  interval_t accumulated_error;   // Integrator state of the servo after this round.
+} ClockSyncRound;
+
+/**
+ * @brief Called at the end of every clock-sync round on a federate that synchronizes with a master.
+ *
+ * The runtime provides an empty weak default. An application can define this function to observe
+ * clock synchronization, e.g. to record the offsets for an evaluation without debug logging.
+ * It is called from the scheduler while handling a system event, so it must return quickly and
+ * must not block or call into the runtime.
+ */
+void lf_clock_sync_round_observed(Environment* env, const ClockSyncRound* round);
+
 struct ClockSynchronization {
   SystemEventHandler super; // ClockSynchronization is a subclass of SystemEventHandler
   Environment* env;
