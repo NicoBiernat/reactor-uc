@@ -32,13 +32,19 @@ class UcStartupCoordinatorGenerator(
 
   companion object {
     // The number of system events allocated for each neighbor. Used to schedule received messages
-    // as system events. StartTimeProposals must not be dropped (the negotiation waits for the
-    // proposals of all neighbors). A neighbor can be at most one step ahead in the negotiation (its
-    // proposal of step k+1 requires our proposal of step k), so at most two proposals of a neighbor
-    // can be pending at the same time. HandshakeRequests and HandshakeResponses can be dropped if
-    // the shared pool is full, because the handshake is retried until all neighbors responded. A
-    // neighbor only sends proposals after its handshake has completed.
-    val numSystemEventsPerBundle = 2
+    // as system events. The incoming slots are shared by all neighbors, so the bound must hold for
+    // every neighbor at the same time:
+    // - StartTimeProposals must not be dropped (they are not retried and the negotiation waits for
+    //   the proposals of all neighbors). A neighbor can be at most one step ahead in the negotiation
+    //   (its proposal of step k+1 requires our proposal of step k), so at most two proposals of a
+    //   neighbor are pending at the same time.
+    // - HandshakeRequests are retried every 250 ms (and each is answered by a HandshakeResponse),
+    //   also while this federate does not handle system events yet. The coordinator keeps at most
+    //   one pending request and one pending response per neighbor and drops duplicates (see
+    //   StartupCoordinator_handle_message_callback), otherwise retries could fill the shared pool
+    //   and the following proposals would be dropped.
+    // => 2 proposals + 1 request + 1 response.
+    val numSystemEventsPerBundle = 4
 
     // The number of additional system events allocated. These are the events a federate
     // schedules for ITSELF, and the value must match the NUM_RESERVED_EVENTS compile def in
